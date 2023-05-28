@@ -16,9 +16,12 @@
  * processing a request
  *
  */
-import { type CreateNextContextOptions } from "@trpc/server/adapters/next";
+import type {
+  SignedInAuthObject,
+  SignedOutAuthObject,
+} from "@clerk/nextjs/api";
 import { getAuth } from "@clerk/nextjs/server";
-import type { SignedInAuthObject,SignedOutAuthObject } from "@clerk/nextjs/api";
+import { type CreateNextContextOptions } from "@trpc/server/adapters/next";
 
 import { prisma } from "../db";
 
@@ -34,7 +37,7 @@ interface AuthContext {
  * - trpc's `createSSGHelpers` where we don't have req/res
  * @see https://create.t3.gg/en/usage/trpc#-servertrpccontextts
  */
-const createInnerTRPCContext = ({ auth }: AuthContext  ) => {
+const createInnerTRPCContext = ({ auth }: AuthContext) => {
   return {
     auth,
     prisma,
@@ -47,10 +50,10 @@ const createInnerTRPCContext = ({ auth }: AuthContext  ) => {
  * @link https://trpc.io/docs/context
  */
 export const createTRPCContext = async (opts: CreateNextContextOptions) => {
-  
-
   return createInnerTRPCContext({ auth: getAuth(opts.req) });
 };
+
+// export type TRPCContext = trpc.inferAsyncReturnType<typeof createTRPCContext>;
 
 /**
  * 2. INITIALIZATION
@@ -60,15 +63,24 @@ export const createTRPCContext = async (opts: CreateNextContextOptions) => {
  */
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
+import { ZodError } from "zod";
 
 const t = initTRPC.context<typeof createTRPCContext>().create({
   transformer: superjson,
-  errorFormatter({ shape }) {
-    return shape;
+  errorFormatter({ shape, error }) {
+    return {
+      ...shape,
+      data: {
+        ...shape.data,
+        zodError:
+          error.cause instanceof ZodError ? error.cause.flatten() : null,
+      },
+    };
   },
 });
 
-// check if the user is signed in, otherwise through a UNAUTHORIZED CODE
+// check if the user is signed in, otherwise throw a UNAUTHORIZED CODE
+/** Reusable middleware that enforces users are logged in before running the procedure. */
 const isAuthed = t.middleware(({ next, ctx }) => {
   if (!ctx.auth.userId) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
